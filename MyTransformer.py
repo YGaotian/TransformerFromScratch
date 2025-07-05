@@ -13,11 +13,12 @@ class Transformer(nn.Module):
         self.decoder = Decoder(d_model, hidden_dim, head_num, dropout_rate, layer_num, max_seq_len)
         self.linear = nn.Linear(d_model, vocab_size, bias=False)
 
-    def forward(self, x, target=None):
-        word_embedding = self.word_emb(x)
-        position_embedding = self.pos_enc(word_embedding)
-        encoder_out = self.encoder(position_embedding)
-        decoder_out = self.decoder(position_embedding, encoder_out, cross=True)
+    def forward(self, x_enc, x_dec, target=None):
+        enc_emb, enc_padding_mask = self.word_emb(x_enc)
+        dec_emb, dec_padding_mask = self.word_emb(x_dec)
+        position_embedding = self.pos_enc(enc_emb)
+        encoder_out = self.encoder(position_embedding, enc_padding_mask)
+        decoder_out = self.decoder(position_embedding, dec_padding_mask, encoder_out, enc_padding_mask)
         if target is not None:
             output = self.linear(decoder_out)
             loss = F.cross_entropy(output.view(-1, output.shape[-1]), target.view(-1))

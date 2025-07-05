@@ -1,3 +1,4 @@
+import nltk
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,7 +25,8 @@ class FFN(nn.Module):
 class StringData:
     def __init__(self):
         self.corpus = brown.words()
-        self.vocab = np.append(np.unique([word.lower() for word in self.corpus]), [" ", "<!?UNK?!>"])
+        self.vocab = np.append(np.unique([word.lower() for word in self.corpus]),
+                               ["<BOS>", "<EOS>", "<UNK>", "<PAD>"])
         self._word2idx = {word: idx for idx, word in enumerate(self.vocab)}
         self._idx2word = {idx: word for word, idx in self._word2idx.items()}
 
@@ -36,34 +38,57 @@ class StringData:
 
     def word2idx(self, words: list):
         assert len(words) > 0, "No word received."
-        return torch.LongTensor([self._word2idx.get(word.lower(), self._word2idx["<!?UNK?!>"]) for word in words])
+        return [self._word2idx.get(word.lower(), self._word2idx["<UNK>"]) for word in words]
+
+    def sentence2mtx(self, sentences: list[str], pad_id=-1):
+        word_seq_arr = []
+        max_pad_len = 0
+        padded_sentences = []
+        for sentence in sentences:
+            word_list = nltk.word_tokenize(sentence)
+            if max_pad_len < len(word_list):
+                max_pad_len = len(word_list)
+            word_seq_arr.append(self.word2idx(word_list))
+        for seq in word_seq_arr:
+            pad_num = max_pad_len - len(seq)
+            padded_seq = seq + pad_num * [pad_id]
+            padded_sentences.append(padded_seq)
+        return padded_sentences
 
     def idx2word(self, ids: list):
         assert len(ids) > 0, "No index received."
-        return np.array([self._idx2word[idx] for idx in ids])
+        return [self._idx2word[idx] for idx in ids]
 
 
 class WordEmbedding(nn.Module):
-    def __init__(self, vocab_size, d_model):
+    def __init__(self, vocab_size, d_model, pad_id=-1):
         super().__init__()
-        self.vocabulary = nn.Parameter(torch.randn(vocab_size, d_model))
+        self.pad_id = pad_id
+        padding_emb = torch.zeros(1, d_model)
+        self.vocabulary = nn.Parameter(
+            torch.cat([torch.randn(vocab_size - 1, d_model), padding_emb], dim=0)
+        )
 
-    def forward(self, word_indices: torch.LongTensor):
-        return self.vocabulary[word_indices]
+    def forward(self, word_indices: list):
+        index_mtx = torch.tensor(word_indices, dtype=torch.long)
+        padding_mask = (index_mtx == self.pad_id)
+        return self.vocabulary[index_mtx], padding_mask
 
 
 class Attention(nn.Module):
     def __init__(self, d_model, head_num, dropout_rate, is_causal=False, max_seq_len=None):
         super().__init__()
+        assert d_model % head_num == 0, "d_model must be an integer multiple of head_num."
         self.model_dim = d_model
         self.head_num = head_num
         self.head_dim = self.model_dim // head_num
         self.dropout_rate = dropout_rate
         self.is_causal = is_causal
         if is_causal:
-            assert max_seq_len is not None, "The argument \"max_seq_len\" should be passed in for causal inference."
-            self.mask = torch.triu(torch.full([1, 1, max_seq_len, max_seq_len], -torch.inf), diagonal=1)
-            self.register_buffer("attnMask", self.mask)
+            assert max_seq_len is not None, \
+                "The argument \"max_seq_len\" should be passed in for causal inference."
+            self.causal_mask = torch.triu(torch.full([1, 1, max_seq_len, max_seq_len], -torch.inf), diagonal=1)
+            self.register_buffer("attnMask", self.causal_mask)
         self.W_q = nn.Linear(d_model, d_model, bias=False)
         self.W_v = nn.Linear(d_model, d_model, bias=False)
         self.W_k = nn.Linear(d_model, d_model, bias=False)
@@ -71,24 +96,21 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(self.dropout_rate)
         self.res_drop = nn.Dropout(self.dropout_rate)
 
-    def forward(self, x_self, x_other=None, cross=False):
-        assert (x_other is None) == (not cross), \
-            "Cross attention requires these arguments: x_self, x_other, and cross=True."
-        if not cross:
-            # Shape: (batch_size, sequence_size, model_dim)
-            q = self.W_q(x_self)
-            k = self.W_k(x_self)
-            v = self.W_v(x_self)
-        else:
-            q = self.W_q(x_self)
-            k = self.W_k(x_other)
-            v = self.W_v(x_other)
+    def forward(self, x_self, self_padding_mask, x_other=None, other_padding_mask=None):
+        assert (x_other is None) == (other_padding_mask is None), \
+            "Cross attention requires x_other and other_padding_mask."
+        is_cross = (x_other is not None)
+        # Shape: (batch_size, sequence_size, model_dim)
+        q = self.W_q(x_self)
+        k = self.W_k(x_other if is_cross else x_self)
+        v = self.W_v(x_other if is_cross else x_self)
         # Get input shape
-        batch_size, seq_len, _ = q.shape
+        batch_size, q_seq_len, _ = q.shape
+        kv_seq_len = k.shape[1]
         # Split to n heads
-        q_multihead = q.view(batch_size, seq_len, self.head_num, self.head_dim)
-        k_multihead = k.view(batch_size, seq_len, self.head_num, self.head_dim)
-        v_multihead = v.view(batch_size, seq_len, self.head_num, self.head_dim)
+        q_multihead = q.view(batch_size, q_seq_len, self.head_num, self.head_dim)
+        k_multihead = k.view(batch_size, kv_seq_len, self.head_num, self.head_dim)
+        v_multihead = v.view(batch_size, kv_seq_len, self.head_num, self.head_dim)
         # Matmul operates on the last 2 dimensions of a Tensor, and the remaining dimensions are considered batches,
         # which will be merged element-wise. For the current case, we need (seq_len, head_dim) @ (head_dim, seq_len),
         # but our tensors' last 2 dimensions are head_num and head_dim. So, we need to switch dim_1 and dim_2.
@@ -99,10 +121,21 @@ class Attention(nn.Module):
         # For each head, every word in a sequence would have a dot product for all words contained in that sequence.
         # Therefore, there are (seq_len * seq_len) dot products in every head.
         # Shape: (batch_size, head_num, seq_len, seq_len)
-        attn_scores = q_multihead @ k_multihead.transpose(-1, -2) / torch.sqrt(self.head_dim)
-        # An attention mask for causal tasks.
-        if self.is_causal:
-            attn_scores += self.mask[:, :, :seq_len, :seq_len]
+        attn_scores = q_multihead @ k_multihead.transpose(-1, -2) / torch.sqrt(torch.tensor(self.head_dim))
+        if is_cross:
+            col_padding_mask = other_padding_mask
+        else:
+            col_padding_mask = self_padding_mask
+            # Attention mask for causal tasks.
+            if self.is_causal:
+                attn_scores += self.causal_mask[:, :, :q_seq_len, :kv_seq_len]
+        col_extended_padding_mask = col_padding_mask.unsqueeze(1).unsqueeze(2)
+        attn_scores += (torch.zeros_like(col_extended_padding_mask, dtype=torch.float)
+                             .masked_fill_(col_extended_padding_mask, -torch.inf))
+        row_extended_padding_mask = self_padding_mask.unsqueeze(1).unsqueeze(-1)
+        attn_scores += (torch.zeros_like(row_extended_padding_mask, dtype=torch.float)
+                             .masked_fill_(row_extended_padding_mask, -torch.inf))
+
         # Function "F.softmax" == torch.softmax, != class "nn.Softmax" which needs to be initialized
         attn_weights = F.softmax(attn_scores.float(), dim=-1).type_as(q)  # Use F.softmax by community's convention
         attn_weights = self.attn_drop(attn_weights)
@@ -110,16 +143,16 @@ class Attention(nn.Module):
         # Concatenate multiple heads
         context_emb_T = context_emb.transpose(1, 2)  # Shape: (batch_size, seq_len, head_num, seq_len)
         # Shape: (batch_size, seq_len, model_dim)
-        output = context_emb_T.contiguous().view(batch_size, seq_len, self.model_dim)
+        output = context_emb_T.contiguous().view(batch_size, q_seq_len, self.model_dim)
         output = self.W_o(output)
         output = self.res_drop(output)
         return output
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout_rate, max_seq_len):
+    def __init__(self, d_model, max_seq_len, dropout_rate):
         super().__init__()
-        self.position_embedding = nn.Parameter(torch.randn(max_seq_len, d_model))
+        self.position_embedding = nn.Parameter(torch.randn([max_seq_len, d_model]))
         self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, x):
@@ -130,8 +163,8 @@ class PositionalEncoding(nn.Module):
 class LayerNorm(nn.Module):
     def __init__(self, d_model):
         super().__init__()
-        self.gamma = nn.Parameter(torch.randn(d_model))
-        self.beta = nn.Parameter(torch.randn(d_model))
+        self.gamma = nn.Parameter(torch.tensor(1, dtype=torch.float))
+        self.beta = nn.Parameter(torch.tensor(0, dtype=torch.float))
 
     def forward(self, x):
         normalized = (x - torch.mean(x, dim=-1, keepdim=True)) / (torch.std(x, dim=-1, keepdim=True) + 1e-7)
@@ -146,9 +179,9 @@ class EncoderLayer(nn.Module):
         self.ffn_normalization = LayerNorm(d_model)
         self.ffn = FFN(d_model, hidden_dim, dropout_rate)
 
-    def forward(self, x):
+    def forward(self, x, self_padding_mask):
         normalized_input = self.input_normalization(x)
-        contextual_embed = self.attention(normalized_input)
+        contextual_embed = self.attention(normalized_input, self_padding_mask)
         residual_contextual_embed = x + contextual_embed
         normalized_self_context = self.ffn_normalization(residual_contextual_embed)
         ffn_output = self.ffn(normalized_self_context)
@@ -160,22 +193,25 @@ class DecoderLayer(nn.Module):
     def __init__(self, d_model, hidden_dim, head_num, dropout_rate, max_seq_len):
         super().__init__()
         # Self attention needs causal inference, so, pass max_seq_len in it
-        self.self_attention = Attention(d_model, head_num, dropout_rate)
+        self.self_attention = Attention(d_model, head_num, dropout_rate, is_causal=True, max_seq_len=max_seq_len)
         self.input_normalization = LayerNorm(d_model)
         self.cross_normalization = LayerNorm(d_model)
         # Cross attention does not need causal inference
-        self.cross_attention = Attention(d_model, head_num, dropout_rate, is_causal=True, max_seq_len=max_seq_len)
+        self.cross_attention = Attention(d_model, head_num, dropout_rate)
         self.ffn_normalization = LayerNorm(d_model)
         self.ffn = FFN(d_model, hidden_dim, dropout_rate)
 
-    def forward(self, x_self, x_other=None, cross=False):
+    def forward(self, x_self, self_padding_mask, x_other, other_padding_mask):
         # Compute self-attention
         normalized_input = self.input_normalization(x_self)
-        contextual_embed = self.self_attention(normalized_input)
+        contextual_embed = self.self_attention(normalized_input, self_padding_mask)
         residual_self_context = x_self + contextual_embed
         # Compute cross-attention
         normalized_self_context = self.cross_normalization(residual_self_context)
-        cross_contextual_embed = self.cross_attention(normalized_self_context, x_other, cross)
+        cross_contextual_embed = self.cross_attention(normalized_self_context,
+                                                      self_padding_mask,
+                                                      x_other,
+                                                      other_padding_mask)
         residual_cross_context = residual_self_context + cross_contextual_embed
         # Feed forward network
         normalized_cross_context = self.ffn_normalization(residual_cross_context)
@@ -191,9 +227,9 @@ class Encoder(nn.Module):
                                                           head_num, dropout_rate) for _ in range(layer_num)])
         self.encoder_normalization = LayerNorm(d_model)
 
-    def forward(self, x):
+    def forward(self, x, self_padding_mask):
         for layer in self.encoder_layers:
-            x = layer(x)
+            x = layer(x, self_padding_mask)
         return self.encoder_normalization(x)
 
 
@@ -204,7 +240,7 @@ class Decoder(nn.Module):
                                                           dropout_rate, max_seq_len) for _ in range(layer_num)])
         self.decoder_normalization = LayerNorm(d_model)
 
-    def forward(self, x_self, x_other=None, cross=False):
+    def forward(self, x_self, self_padding_mask, x_other, other_padding_mask):
         for layer in self.decoder_layers:
-            x_self = layer(x_self, x_other, cross)
+            x_self = layer(x_self, self_padding_mask, x_other, other_padding_mask)
         return self.decoder_normalization(x_self)
