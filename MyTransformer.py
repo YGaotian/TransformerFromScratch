@@ -2,7 +2,7 @@ from Components import *
 
 
 class Transformer(nn.Module):
-    def __init__(self, d_model, hidden_dim, head_num, vocab_size,
+    def __init__(self, d_model, hidden_dim_multiple, head_num, vocab_size,
                  dropout_rate, max_seq_len, layer_num, pad_id):
         super().__init__()
         self.max_seq_len = max_seq_len
@@ -10,8 +10,8 @@ class Transformer(nn.Module):
         self.word_emb = WordEmbedding(vocab_size, d_model, pad_id)
         self.enc_pos_emb = PositionalEncoding(d_model, max_seq_len, dropout_rate)
         self.dec_pos_emb = PositionalEncoding(d_model, max_seq_len, dropout_rate)
-        self.encoder = Encoder(d_model, hidden_dim, head_num, dropout_rate, layer_num)
-        self.decoder = Decoder(d_model, hidden_dim, head_num, dropout_rate, layer_num, max_seq_len)
+        self.encoder = Encoder(d_model, hidden_dim_multiple, head_num, dropout_rate, layer_num)
+        self.decoder = Decoder(d_model, hidden_dim_multiple, head_num, dropout_rate, layer_num, max_seq_len)
         self.linear = nn.Linear(d_model, vocab_size, bias=False)
         # Initialize all parameters
         self.apply(self._init_weights)
@@ -49,14 +49,14 @@ class Transformer(nn.Module):
             nn.init.normal_(module.position_embedding, mean=0.0, std=.02)
 
 
-D_MODEL = 32
-HIDDEN_DIM = 4
+D_MODEL = 128
+HIDDEN_DIM_MULTIPLE = 2
 HEAD_NUM = 8
 DROPOUT_RATE = 0.3
 MAX_SEQ_LEN = 128
 LAYER_NUM = 4
 
 VOCABULARY = Vocabulary()
-MODEL = Transformer(D_MODEL, HIDDEN_DIM, HEAD_NUM, VOCABULARY.size,
+MODEL = Transformer(D_MODEL, HIDDEN_DIM_MULTIPLE, HEAD_NUM, VOCABULARY.size,
                     DROPOUT_RATE, MAX_SEQ_LEN, LAYER_NUM, VOCABULARY.pad_id)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

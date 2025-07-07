@@ -8,8 +8,9 @@ from DebugMode import log
 
 
 class FFN(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout_rate: float):
+    def __init__(self, dim, hidden_dim_multiple, dropout_rate: float):
         super().__init__()
+        hidden_dim = dim * hidden_dim_multiple
         self.input_layer = nn.Linear(dim, hidden_dim, bias=False)
         self.out_layer = nn.Linear(hidden_dim, dim, bias=False)
         self.activation = nn.ReLU()
@@ -189,12 +190,12 @@ class LayerNorm(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_model, hidden_dim, head_num, dropout_rate):
+    def __init__(self, d_model, hidden_dim_multiple, head_num, dropout_rate):
         super().__init__()
         self.attention = Attention(d_model, head_num, dropout_rate)
         self.input_normalization = LayerNorm(d_model)
         self.ffn_normalization = LayerNorm(d_model)
-        self.ffn = FFN(d_model, hidden_dim, dropout_rate)
+        self.ffn = FFN(d_model, hidden_dim_multiple, dropout_rate)
 
     def forward(self, x, self_padding_mask):
         normalized_input = self.input_normalization(x)
@@ -207,7 +208,7 @@ class EncoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, d_model, hidden_dim, head_num, dropout_rate, max_seq_len):
+    def __init__(self, d_model, hidden_dim_multiple, head_num, dropout_rate, max_seq_len):
         super().__init__()
         # Self attention needs causal inference, so, pass max_seq_len in it
         self.self_attention = Attention(d_model, head_num, dropout_rate, is_causal=True, max_seq_len=max_seq_len)
@@ -216,7 +217,7 @@ class DecoderLayer(nn.Module):
         # Cross attention does not need causal inference
         self.cross_attention = Attention(d_model, head_num, dropout_rate)
         self.ffn_normalization = LayerNorm(d_model)
-        self.ffn = FFN(d_model, hidden_dim, dropout_rate)
+        self.ffn = FFN(d_model, hidden_dim_multiple, dropout_rate)
 
     def forward(self, x_self, self_padding_mask, x_other, other_padding_mask):
         # Compute self-attention
@@ -241,9 +242,9 @@ class DecoderLayer(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, d_model, hidden_dim, head_num, dropout_rate, layer_num):
+    def __init__(self, d_model, hidden_dim_multiple, head_num, dropout_rate, layer_num):
         super().__init__()
-        self.encoder_layers = nn.ModuleList([EncoderLayer(d_model, hidden_dim,
+        self.encoder_layers = nn.ModuleList([EncoderLayer(d_model, hidden_dim_multiple,
                                                           head_num, dropout_rate) for _ in range(layer_num)])
         self.encoder_normalization = LayerNorm(d_model)
 
@@ -254,9 +255,9 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, d_model, hidden_dim, head_num, dropout_rate, layer_num, max_seq_len):
+    def __init__(self, d_model, hidden_dim_multiple, head_num, dropout_rate, layer_num, max_seq_len):
         super().__init__()
-        self.decoder_layers = nn.ModuleList([DecoderLayer(d_model, hidden_dim, head_num,
+        self.decoder_layers = nn.ModuleList([DecoderLayer(d_model, hidden_dim_multiple, head_num,
                                                           dropout_rate, max_seq_len) for _ in range(layer_num)])
         self.decoder_normalization = LayerNorm(d_model)
 

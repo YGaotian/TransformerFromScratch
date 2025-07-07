@@ -10,7 +10,7 @@ def one_of_top(distribution, k=3):
     return one_in_top_k
 
 
-def model_predict(input_sentences, *, vocab, model, device, max_output_len=128):
+def model_predict(input_sentences, *, vocab, model, device, freedom_degree=3, max_output_len=128):
     model.load_state_dict(torch.load("./weight.pth", map_location="cpu"))
     model.eval()
     model = model.to(device)
@@ -20,7 +20,7 @@ def model_predict(input_sentences, *, vocab, model, device, max_output_len=128):
     for i in range(max_output_len):
         model_output, _ = model(x_enc, x_dec)
         word_distribution = model_output[0, 0]
-        next_token_id = one_of_top(word_distribution, k=3)
+        next_token_id = one_of_top(word_distribution, k=freedom_degree)
         next_token = torch.tensor([[next_token_id]]).to(device)
         x_dec = torch.cat([x_dec, next_token], dim=-1)
         if next_token_id.item() == vocab.eos_id:
@@ -32,11 +32,13 @@ def model_predict(input_sentences, *, vocab, model, device, max_output_len=128):
 def main(debug=False):   # Set this to True to output debugging info
     log.debug_mode(debug)
 
-    word_list = model_predict(["I would like to know if it is a good idea to go out tomorrow."],
-                              vocab=VOCABULARY, model=MODEL, device=DEVICE)
-    print("Word List: ", word_list)
+    input_sentence = "How have you been?"
+    word_list = model_predict([input_sentence],
+                              vocab=VOCABULARY, model=MODEL, device=DEVICE, freedom_degree=3)
+    # print("Word List: ", word_list)
     generated_sentence = " ".join(word_list[1:-2]) + word_list[-2]
-    print(generated_sentence)
+    print("You say: " + input_sentence)
+    print("AI answers: " + generated_sentence)
 
 
 if __name__ == "__main__":
