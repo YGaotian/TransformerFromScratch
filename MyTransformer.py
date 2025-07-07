@@ -3,7 +3,7 @@ from Components import *
 
 class Transformer(nn.Module):
     def __init__(self, d_model, hidden_dim, head_num, vocab_size,
-                 dropout_rate, max_seq_len, layer_num, pad_id=-1):
+                 dropout_rate, max_seq_len, layer_num, pad_id):
         super().__init__()
         self.max_seq_len = max_seq_len
         self.pad_id = pad_id
@@ -13,6 +13,8 @@ class Transformer(nn.Module):
         self.encoder = Encoder(d_model, hidden_dim, head_num, dropout_rate, layer_num)
         self.decoder = Decoder(d_model, hidden_dim, head_num, dropout_rate, layer_num, max_seq_len)
         self.linear = nn.Linear(d_model, vocab_size, bias=False)
+        # Initialize all parameters
+        self.apply(self._init_weights)
 
     def forward(self, x_enc, x_dec, target=None):
         enc_emb, enc_padding_mask = self.word_emb(x_enc)
@@ -28,8 +30,33 @@ class Transformer(nn.Module):
             loss = F.cross_entropy(output.view(-1, output.shape[-1]), target.view(-1), ignore_index=self.pad_id)
         else:
             # Get the last word's probability distribution from the distribution matrix of the sequence
-            output = self.linear(decoder_out[:, [-1], :])   # Shape: [batch_size, seq_len, d_model]
+            output = self.linear(decoder_out[:, [-1], :])   # Shape: [batch_size, 1 (last word of seq), vocab_size]
             loss = None
         return output, loss
 
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0)
 
+        elif isinstance(module, WordEmbedding):
+            nn.init.normal_(module.vocabulary, mean=0.0, std=.02)
+            with torch.no_grad():
+                module.vocabulary[self.pad_id].fill_(0)
+
+        elif isinstance(module, PositionalEncoding):
+            nn.init.normal_(module.position_embedding, mean=0.0, std=.02)
+
+
+D_MODEL = 32
+HIDDEN_DIM = 4
+HEAD_NUM = 8
+DROPOUT_RATE = 0.3
+MAX_SEQ_LEN = 128
+LAYER_NUM = 4
+
+VOCABULARY = Vocabulary()
+MODEL = Transformer(D_MODEL, HIDDEN_DIM, HEAD_NUM, VOCABULARY.size,
+                    DROPOUT_RATE, MAX_SEQ_LEN, LAYER_NUM, VOCABULARY.pad_id)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

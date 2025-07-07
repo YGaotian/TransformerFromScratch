@@ -25,23 +25,36 @@ class FFN(nn.Module):
 
 class Vocabulary:
     def __init__(self):
-        self.corpus = brown.words()
-        self.vocab = np.append(np.unique([word.lower() for word in self.corpus]),
-                               ["<bos>", "<eos>", "<unk>", "<pad>"])
-        self._word2idx = {word: idx for idx, word in enumerate(self.vocab)}
+        self._corpus = brown.words()
+        self._vocab = np.append(np.unique([word.lower() for word in self._corpus]),
+                                ["<bos>", "<eos>", "<unk>", "<pad>"]).tolist()
+        self._word2idx = {word: idx for idx, word in enumerate(self._vocab)}
         self._idx2word = {idx: word for word, idx in self._word2idx.items()}
+        self._pad_id = self._word2idx["<pad>"]
+        self._eos_id = self._word2idx["<eos>"]
+        self._size = len(self._vocab)
 
-    def getCorpus(self):
-        return self.corpus
+    @property
+    def pad_id(self):
+        return self._pad_id
 
-    def getVocabSize(self):
-        return len(self.vocab)
+    @property
+    def eos_id(self):
+        return self._eos_id
+
+    @property
+    def corpus(self):
+        return self._corpus
+
+    @property
+    def size(self):
+        return self._size
 
     def word2idx(self, words: list):
         assert len(words) > 0, "No word received."
         return [self._word2idx.get(word.lower(), self._word2idx["<unk>"]) for word in words]
 
-    def sentence2mtx(self, sentences: list[str], bos=False, eos=False, pad_id=-1):
+    def sentence2mtx(self, sentences: list[str], bos=False, eos=False, to_torch=True):
         word_seq_arr = []
         max_pad_len = 0
         padded_sentences = []
@@ -57,8 +70,10 @@ class Vocabulary:
             word_seq_arr.append(self.word2idx(word_list))
         for seq in word_seq_arr:
             pad_num = max_pad_len - len(seq)
-            padded_seq = seq + pad_num * [pad_id]
+            padded_seq = seq + pad_num * [self.pad_id]
             padded_sentences.append(padded_seq)
+        if to_torch:
+            padded_sentences = torch.tensor(padded_sentences)
         return padded_sentences
 
     def idx2word(self, ids: list):
@@ -67,7 +82,7 @@ class Vocabulary:
 
 
 class WordEmbedding(nn.Module):
-    def __init__(self, vocab_size, d_model, pad_id=-1):
+    def __init__(self, vocab_size, d_model, pad_id):
         super().__init__()
         self.pad_id = pad_id
         padding_emb = torch.zeros(1, d_model)
@@ -75,10 +90,9 @@ class WordEmbedding(nn.Module):
             torch.cat([torch.randn(vocab_size - 1, d_model), padding_emb], dim=0)
         )
 
-    def forward(self, word_indices: list):
-        index_mtx = torch.tensor(word_indices, dtype=torch.long)
-        padding_mask = (index_mtx == self.pad_id)
-        return self.vocabulary[index_mtx], padding_mask
+    def forward(self, word_indices):
+        padding_mask = (word_indices == self.pad_id)
+        return self.vocabulary[word_indices], padding_mask
 
 
 class Attention(nn.Module):
@@ -94,7 +108,7 @@ class Attention(nn.Module):
             assert max_seq_len is not None, \
                 "The argument \"max_seq_len\" should be passed in for causal inference."
             self.causal_mask = torch.triu(torch.full([1, 1, max_seq_len, max_seq_len], -torch.inf), diagonal=1)
-            self.register_buffer("attnMask", self.causal_mask)
+            self.register_buffer("causal_attn_mask", self.causal_mask)
         self.W_q = nn.Linear(d_model, d_model, bias=False)
         self.W_v = nn.Linear(d_model, d_model, bias=False)
         self.W_k = nn.Linear(d_model, d_model, bias=False)
@@ -102,10 +116,8 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(self.dropout_rate)
         self.res_drop = nn.Dropout(self.dropout_rate)
 
-    def forward(self, x_self, self_padding_mask, x_other=None, other_padding_mask=None):
-        assert (x_other is None) == (other_padding_mask is None), \
-            "Cross attention requires x_other and other_padding_mask."
-        is_cross = (x_other is not None)
+    def forward(self, x_self, x_other, padding_mask):
+        is_cross = not (x_self is x_other)
         # Shape: (batch_size, sequence_size, model_dim)
         q = self.W_q(x_self)
         k = self.W_k(x_other if is_cross else x_self)
@@ -113,7 +125,8 @@ class Attention(nn.Module):
         # Get input shape
         q_batch_size, q_seq_len, _ = q.shape
         kv_batch_size, kv_seq_len, _ = k.shape
-        assert q_batch_size == kv_batch_size, "Encoder input and decoder input must have the same batch size."
+        assert q_batch_size == kv_batch_size, \
+            "Encoder input and decoder input must have the same batch size."
         batch_size = q_batch_size
         log("q Shape: ", q.shape)
         log("k Shape: ", k.shape)
@@ -132,24 +145,14 @@ class Attention(nn.Module):
         # Therefore, there are (seq_len * seq_len) dot products in every head.
         # Shape: (batch_size, head_num, seq_len, seq_len)
         attn_scores = q_multihead @ k_multihead.transpose(-1, -2) / torch.sqrt(torch.tensor(self.head_dim))
-        if is_cross:
-            log("cross_padding")
-            col_padding_mask = other_padding_mask
-        else:
-            log("self_padding")
-            col_padding_mask = self_padding_mask
-            # Attention mask for causal tasks.
-            if self.is_causal:
-                attn_scores += self.causal_mask[:, :, :q_seq_len, :kv_seq_len]
-                log(attn_scores.shape)
-        col_extended_padding_mask = col_padding_mask.unsqueeze(1).unsqueeze(2)
+        # Attention mask for causal tasks.
+        if self.is_causal and not is_cross:
+            attn_scores += self.causal_attn_mask[:, :, :q_seq_len, :kv_seq_len]
+            log(attn_scores.shape)
+        col_extended_padding_mask = padding_mask.unsqueeze(1).unsqueeze(2)
         log(col_extended_padding_mask.shape)
         attn_scores += (torch.zeros_like(col_extended_padding_mask, dtype=torch.float)
                              .masked_fill_(col_extended_padding_mask, -torch.inf))
-        row_extended_padding_mask = self_padding_mask.unsqueeze(1).unsqueeze(-1)
-        attn_scores += (torch.zeros_like(row_extended_padding_mask, dtype=torch.float)
-                             .masked_fill_(row_extended_padding_mask, -torch.inf))
-
         # Function "F.softmax" == torch.softmax, != class "nn.Softmax" which needs to be initialized
         attn_weights = F.softmax(attn_scores.float(), dim=-1).type_as(q)  # Use F.softmax by community's convention
         attn_weights = self.attn_drop(attn_weights)
@@ -177,8 +180,8 @@ class PositionalEncoding(nn.Module):
 class LayerNorm(nn.Module):
     def __init__(self, d_model):
         super().__init__()
-        self.gamma = nn.Parameter(torch.tensor(1, dtype=torch.float))
-        self.beta = nn.Parameter(torch.tensor(0, dtype=torch.float))
+        self.gamma = nn.Parameter(torch.ones(d_model, dtype=torch.float))
+        self.beta = nn.Parameter(torch.zeros(d_model, dtype=torch.float))
 
     def forward(self, x):
         normalized = (x - torch.mean(x, dim=-1, keepdim=True)) / (torch.std(x, dim=-1, keepdim=True) + 1e-7)
@@ -195,7 +198,7 @@ class EncoderLayer(nn.Module):
 
     def forward(self, x, self_padding_mask):
         normalized_input = self.input_normalization(x)
-        contextual_embed = self.attention(normalized_input, self_padding_mask)
+        contextual_embed = self.attention(normalized_input, normalized_input, self_padding_mask)
         residual_contextual_embed = x + contextual_embed
         normalized_self_context = self.ffn_normalization(residual_contextual_embed)
         ffn_output = self.ffn(normalized_self_context)
@@ -219,14 +222,13 @@ class DecoderLayer(nn.Module):
         # Compute self-attention
         normalized_input = self.input_normalization(x_self)
         log("computing self attn")
-        contextual_embed = self.self_attention(normalized_input, self_padding_mask)
+        contextual_embed = self.self_attention(normalized_input, normalized_input, self_padding_mask)
         log("self attn done")
         residual_self_context = x_self + contextual_embed
         # Compute cross-attention
         normalized_self_context = self.cross_normalization(residual_self_context)
         log("computing cross attn")
         cross_contextual_embed = self.cross_attention(normalized_self_context,
-                                                      self_padding_mask,
                                                       x_other,
                                                       other_padding_mask)
         log("cross attn done")
