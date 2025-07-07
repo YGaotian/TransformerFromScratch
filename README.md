@@ -14,4 +14,5 @@ Currently, fewer than 200 pairs of dialog texts are used to train this model, to
 I plan to switch to a larger and better dataset and re-train the model later.
 
 ## Current Artificial Idiot Performance
-![image](https://github.com/user-attachments/assets/10f5f7d8-b94e-40de-9d27-eb2b5bbdc7db)
+![image](https://github.com/user-attachments/assets/54fb53ad-85e8-4819-b652-3a924f886ca2)
+
