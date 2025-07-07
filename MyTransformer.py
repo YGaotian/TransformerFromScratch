@@ -16,6 +16,14 @@ class Transformer(nn.Module):
         # Initialize all parameters
         self.apply(self._init_weights)
 
+    def num_of_param(self, count_embedding):
+        all_num = sum(para.numel() for para in self.parameters())
+        if not count_embedding:
+            return (all_num - self.word_emb.vocabulary.numel()
+                    - self.enc_pos_emb.position_embedding.numel()
+                    - self.dec_pos_emb.position_embedding.numel())
+        return all_num
+
     def forward(self, x_enc, x_dec, target=None):
         enc_emb, enc_padding_mask = self.word_emb(x_enc)
         dec_emb, dec_padding_mask = self.word_emb(x_dec)
@@ -54,7 +62,7 @@ HIDDEN_DIM_MULTIPLE = 2
 HEAD_NUM = 8
 DROPOUT_RATE = 0.3
 MAX_SEQ_LEN = 128
-LAYER_NUM = 4
+LAYER_NUM = 6
 
 VOCABULARY = Vocabulary()
 MODEL = Transformer(D_MODEL, HIDDEN_DIM_MULTIPLE, HEAD_NUM, VOCABULARY.size,

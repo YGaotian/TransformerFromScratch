@@ -30,4 +30,4 @@ def train(enc_data, dec_data, model, vocab, device, num_epoch=50, learning_rate=
     torch.save(model.state_dict(), "weight.pth")
 
 log.debug_mode(False)  # Set this to True for debugging information
-train(enc_data=data_A, dec_data=data_B, model=MODEL, vocab=VOCABULARY, device=DEVICE, num_epoch=1500)
+train(enc_data=data_A, dec_data=data_B, model=MODEL, vocab=VOCABULARY, device=DEVICE, num_epoch=1000)

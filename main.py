@@ -32,11 +32,12 @@ def model_predict(input_sentences, *, vocab, model, device, freedom_degree=3, ma
 def main(debug=False):   # Set this to True to output debugging info
     log.debug_mode(debug)
 
-    input_sentence = "How have you been?"
+    input_sentence = "Do you know what time is it now?"
     word_list = model_predict([input_sentence],
                               vocab=VOCABULARY, model=MODEL, device=DEVICE, freedom_degree=3)
     # print("Word List: ", word_list)
     generated_sentence = " ".join(word_list[1:-2]) + word_list[-2]
+    print("All model parameters: " + str(MODEL.num_of_param(count_embedding=False)))
     print("You say: " + input_sentence)
     print("AI answers: " + generated_sentence)
 
