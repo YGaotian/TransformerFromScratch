@@ -55,16 +55,3 @@ class Transformer(nn.Module):
 
         elif isinstance(module, PositionalEncoding):
             nn.init.normal_(module.position_embedding, mean=0.0, std=.02)
-
-
-D_MODEL = 128
-HIDDEN_DIM_MULTIPLE = 2
-HEAD_NUM = 8
-DROPOUT_RATE = 0.3
-MAX_SEQ_LEN = 128
-LAYER_NUM = 6
-
-VOCABULARY = Vocabulary()
-MODEL = Transformer(D_MODEL, HIDDEN_DIM_MULTIPLE, HEAD_NUM, VOCABULARY.size,
-                    DROPOUT_RATE, MAX_SEQ_LEN, LAYER_NUM, VOCABULARY.pad_id)
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -1,5 +1,4 @@
-import logging
-
+from setup import *
 from MyTransformer import *
 
 
@@ -32,7 +31,7 @@ def model_predict(input_sentences, *, vocab, model, device, freedom_degree=3, ma
 def main(debug=False):   # Set this to True to output debugging info
     log.debug_mode(debug)
 
-    input_sentence = "Do you know what time is it now?"
+    input_sentence = "Where are you?"
     word_list = model_predict([input_sentence],
                               vocab=VOCABULARY, model=MODEL, device=DEVICE, freedom_degree=3)
     # print("Word List: ", word_list)
