@@ -1,16 +1,21 @@
 from setup import *
 from MyTransformer import *
+import os
 
 
 def one_of_top(distribution, k=3):
+    assert k >= 1, "Cannot select less than 1 option."
     k_probs, k_indices = torch.topk(distribution, k, dim=-1)
     sampled_id_in_k_indices = torch.multinomial(k_probs, num_samples=1)
     one_in_top_k = torch.gather(k_indices, dim=-1, index=sampled_id_in_k_indices)
     return one_in_top_k
 
 
-def model_predict(input_sentences, *, vocab, model, device, freedom_degree=3, max_output_len=128):
-    model.load_state_dict(torch.load("./weight.pth", map_location="cpu"))
+def model_predict(input_sentences, *, vocab, model, device, param_file, freedom_degree=3, max_output_len=128):
+    if not os.path.exists(param_file):
+        print("Cannot find parameters.")
+    param_dict = torch.load(param_file, map_location="cpu")
+    model.load_state_dict(param_dict["model_state_dict"])
     model.eval()
     model = model.to(device)
 
@@ -31,10 +36,14 @@ def model_predict(input_sentences, *, vocab, model, device, freedom_degree=3, ma
 def main(debug=False):   # Set this to True to output debugging info
     log.debug_mode(debug)
 
-    input_sentence = "Where are you?"
+    input_sentence = "I am so excited!"
     word_list = model_predict([input_sentence],
-                              vocab=VOCABULARY, model=MODEL, device=DEVICE, freedom_degree=3)
-    # print("Word List: ", word_list)
+                              vocab=VOCABULARY,
+                              model=MODEL,
+                              device=DEVICE,
+                              param_file="./Saved_Params/checkpoint_E49L3_7364.pth",
+                              freedom_degree=2)
+
     generated_sentence = " ".join(word_list[1:-2]) + word_list[-2]
     print("All model parameters: " + str(MODEL.num_of_param(count_embedding=False)))
     print("You say: " + input_sentence)
