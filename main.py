@@ -36,12 +36,12 @@ def model_predict(input_sentences, *, vocab, model, device, param_file, freedom_
 def main(debug=False):   # Set this to True to output debugging info
     log.debug_mode(debug)
 
-    input_sentence = "I am so excited!"
+    input_sentence = "I am going to train a model."
     word_list = model_predict([input_sentence],
                               vocab=VOCABULARY,
                               model=MODEL,
                               device=DEVICE,
-                              param_file="./Saved_Params/checkpoint_E49L3_7364.pth",
+                              param_file="./Saved_Params/checkpoint_E59L1_4517.pth",
                               freedom_degree=2)
 
     generated_sentence = " ".join(word_list[1:-2]) + word_list[-2]

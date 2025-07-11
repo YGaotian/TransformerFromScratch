@@ -19,5 +19,4 @@ The following plan is to switch to a larger and better dataset and re-train the 
 In addition, the current tokenizer comes from the library nltk, and the vocabulary is collected from the Brown corpus. A new WordPiece tokenizer's implementation is on the development schedule.
 
 ## Current Artificial Idiot Performance
-![image](https://github.com/user-attachments/assets/54fb53ad-85e8-4819-b652-3a924f886ca2)
-
+![img.png](img.png)
